@@ -35,6 +35,7 @@ from bot.features.account_management import (
     offboard_cancel,
     setup_offboarding_polling,
 )
+from bot.features.ai_report import build_report_handler
 from bot.utils.keyboards import main_menu_keyboard, back_to_menu_keyboard
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -93,6 +94,8 @@ async def help_command(update: Update, context) -> None:
         "/duyetdon — Xem đơn chờ duyệt\n\n"
         "👤 <b>Quản lý tài khoản (Admin/HR):</b>\n"
         "/offboard — Vô hiệu hóa tài khoản nhân viên\n\n"
+        "🤖 <b>Báo cáo AI:</b>\n"
+        "/report — Tạo báo cáo bằng AI\n\n"
         "❌ /cancel — Hủy thao tác hiện tại",
         parse_mode="HTML",
         reply_markup=back_to_menu_keyboard(),
@@ -173,6 +176,7 @@ async def post_init(application: Application) -> None:
         BotCommand("donganday", "Xem đơn gần đây"),
         BotCommand("duyetdon", "Duyệt đơn chờ"),
         BotCommand("offboard", "Offboard nhân viên (Admin/HR)"),
+        BotCommand("report", "Tạo báo cáo bằng AI"),
         BotCommand("help", "Xem danh sách lệnh"),
         BotCommand("cancel", "Hủy thao tác hiện tại"),
     ]
@@ -202,6 +206,9 @@ def build_application() -> Application:
     # ── Conversation handlers (must be added first for priority) ──────────
     create_app_handler = build_create_application_handler()
     app.add_handler(create_app_handler)
+
+    # ── AI Report conversation ─────────────────────────────────────────────
+    app.add_handler(build_report_handler())
 
     # ── Login conversation (must be before generic command handlers) ────────
     app.add_handler(build_login_handler())

@@ -21,6 +21,13 @@ Admin/HR can deactivate employee accounts when they offboard. Auto-detects appro
 
 - `/offboard <employee_code>` — Search and deactivate an employee account
 
+### Feature 4: AI Report Agent (Gemini)
+Ask the bot to generate reports using natural language. Powered by Google Gemini.
+
+- `/report` — Start a conversation with the AI report agent
+- Describe the report you need in plain language (Vietnamese or English)
+- The agent will ask clarifying questions if needed, then fetch data and format a report
+
 ## Setup
 
 ### 1. Prerequisites
@@ -47,6 +54,7 @@ Required variables:
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Your bot token from @BotFather |
 | `ERP_BASE_URL` | ERP API URL (default: `https://staging-erp.twendeesoft.com`) |
+| `GEMINI_API_KEY` | Google AI Studio API key ([get one here](https://aistudio.google.com/apikey)) |
 
 ### 4. Run the Bot
 ```bash
@@ -70,12 +78,16 @@ bot/
 ├── config.py                    # Environment variables, constants
 ├── database.py                  # SQLite session storage
 ├── erp_client.py                # HTTP client for ERP API
+├── ai/
+│   ├── gemini_client.py         # Gemini API wrapper & tool definitions
+│   └── report_agent.py          # AI report orchestration agent
 ├── auth/
 │   └── handler.py               # /login, /token, /logout, /status
 ├── features/
 │   ├── create_application.py    # Feature 1: Create applications
 │   ├── approve_application.py   # Feature 2: Approve/reject
-│   └── account_management.py    # Feature 3: Offboard employees
+│   ├── account_management.py    # Feature 3: Offboard employees
+│   └── ai_report.py             # Feature 4: AI report generation
 └── utils/
     ├── keyboards.py             # Inline keyboard builders
     └── formatters.py            # Message formatters (Vietnamese)
@@ -94,5 +106,6 @@ bot/
 | `/donganday` | Recent applications | Authenticated |
 | `/duyetdon` | Pending approvals | Manager/HR/Admin |
 | `/offboard` | Deactivate employee | HR/Admin |
+| `/report` | AI report generation | Authenticated |
 | `/help` | Command list | All |
 | `/cancel` | Cancel current action | All |

@@ -18,6 +18,9 @@ GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
 # ── Optional admin token for Feature 3 ────────────────────────────────────────
 BOT_ADMIN_TOKEN: str = os.getenv("BOT_ADMIN_TOKEN", "")
 
+# ── Gemini AI ─────────────────────────────────────────────────────────────────
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
 # ── Database ──────────────────────────────────────────────────────────────────
 DB_PATH: str = os.getenv("DB_PATH", "bear_bot.db")
 
@@ -124,3 +127,8 @@ TRANSPORT_METHODS = {
     APPROVE_ACTION,
     ENTER_REJECT_REASON,
 ) = range(100, 103)
+
+# Feature 4: AI Report
+(
+    REPORT_WAITING_INPUT,
+) = range(300, 301)
