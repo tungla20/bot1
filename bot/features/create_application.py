@@ -54,6 +54,9 @@ logger = logging.getLogger(__name__)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+VIETNAM_UTC_OFFSET = timedelta(hours=7)
+
+
 def _parse_date(text: str) -> str:
     """Parse DD/MM/YYYY to ISO format. Raises ValueError on bad input."""
     text = text.strip()
@@ -64,6 +67,22 @@ def _parse_date(text: str) -> str:
         except ValueError:
             continue
     raise ValueError(f"Không thể đọc ngày: {text}")
+
+
+def _parse_date_time_vn(text: str) -> str:
+    """Parse 'DD/MM/YYYY HH:MM' as Vietnam local time and return ISO UTC string.
+
+    Example: '01/04/2026 09:00' (9 AM Vietnam) -> '2026-04-01T02:00:00.000Z' (UTC)
+    """
+    text = text.strip()
+    for fmt in ("%d/%m/%Y %H:%M", "%d-%m-%Y %H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            local_dt = datetime.strptime(text, fmt)
+            utc_dt = local_dt - VIETNAM_UTC_OFFSET
+            return utc_dt.strftime("%Y-%m-%dT%H:%M:00.000Z")
+        except ValueError:
+            continue
+    raise ValueError(f"Không thể đọc thời gian: {text}. Dùng định dạng DD/MM/YYYY HH:MM")
 
 
 def _parse_datetime(date_str: str, time_str: str) -> str:
@@ -191,7 +210,8 @@ async def select_leave_type(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     await query.edit_message_text(
         f"🏖️ Loại nghỉ: <b>{leave_type}</b>\n\n"
-        "Nhập ngày bắt đầu nghỉ (DD/MM/YYYY):",
+        "Nhập ngày giờ bắt đầu nghỉ (DD/MM/YYYY HH:MM):\n"
+        "Ví dụ: 01/04/2026 09:00",
         parse_mode="HTML",
     )
     return ENTER_START_DATE
@@ -199,28 +219,33 @@ async def select_leave_type(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def enter_start_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        start_iso = _parse_date(update.message.text)
+        start_iso = _parse_date_time_vn(update.message.text)
     except ValueError as e:
-        await update.message.reply_text(f"⚠️ {e}\nNhập lại ngày bắt đầu (DD/MM/YYYY):")
+        await update.message.reply_text(
+            f"⚠️ {e}\nNhập lại ngày giờ bắt đầu (DD/MM/YYYY HH:MM):\n"
+            "Ví dụ: 01/04/2026 09:00"
+        )
         return ENTER_START_DATE
 
-    # Store as morning 8:00
-    start_iso = start_iso.replace("T00:00:00", "T08:00:00")
     context.user_data["app_draft"]["_start"] = start_iso
 
-    await update.message.reply_text("Nhập ngày kết thúc nghỉ (DD/MM/YYYY):")
+    await update.message.reply_text(
+        "Nhập ngày giờ kết thúc nghỉ (DD/MM/YYYY HH:MM):\n"
+        "Ví dụ: 01/04/2026 18:00"
+    )
     return ENTER_END_DATE
 
 
 async def enter_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        end_iso = _parse_date(update.message.text)
+        end_iso = _parse_date_time_vn(update.message.text)
     except ValueError as e:
-        await update.message.reply_text(f"⚠️ {e}\nNhập lại ngày kết thúc (DD/MM/YYYY):")
+        await update.message.reply_text(
+            f"⚠️ {e}\nNhập lại ngày giờ kết thúc (DD/MM/YYYY HH:MM):\n"
+            "Ví dụ: 01/04/2026 18:00"
+        )
         return ENTER_END_DATE
 
-    # Store as evening 17:00
-    end_iso = end_iso.replace("T00:00:00", "T17:00:00")
     start_iso = context.user_data["app_draft"]["_start"]
 
     # Calculate approximate days
@@ -235,8 +260,6 @@ async def enter_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "startTime": start_iso,
         "endTime": end_iso,
         "days": days,
-        "leaveBalanceBefore": 0,
-        "leaveBalanceAfter": 0,
     }]
 
     await update.message.reply_text("📝 Nhập lý do nghỉ phép:")
@@ -465,7 +488,7 @@ async def enter_checkin_reason(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def _ask_for_approver(message_obj, context: ContextTypes.DEFAULT_TYPE, client: ERPClient) -> int:
-    """Fetch potential approvers and show an inline keyboard to pick one."""
+    """Fetch potential approvers and show an inline keyboard to pick them (multi-select)."""
     try:
         approvers = await client.get_potential_approvers()
     except Exception as e:
@@ -473,53 +496,100 @@ async def _ask_for_approver(message_obj, context: ContextTypes.DEFAULT_TYPE, cli
         approvers = []
 
     context.user_data["_approvers_cache"] = approvers
+    context.user_data["_selected_approvers"] = []  # list of {approverId, index, name}
 
     if not approvers:
-        # No approvers available — submit without one (will likely fail, but show error)
         await message_obj.reply_text(
             "⚠️ Không tìm thấy người duyệt nào trong hệ thống. Đơn sẽ được gửi không có người duyệt.\n"
             "Gõ /cancel để hủy."
         )
         return CONFIRM_APPLICATION
 
+    return await _show_approver_keyboard(message_obj, context, approvers, edit=False)
+
+
+async def _show_approver_keyboard(target, context, approvers, edit=True):
+    """Show the approver keyboard with current selections marked."""
+    selected_ids = {a["approverId"] for a in context.user_data.get("_selected_approvers", [])}
+    selected_list = context.user_data.get("_selected_approvers", [])
+
     buttons = []
-    for a in approvers[:15]:  # Cap to 15 approvers to avoid huge keyboard
+    for a in approvers[:15]:
+        aid = a.get("id", "")
         name = f"{a.get('firstName', '')} {a.get('lastName', '')}".strip() or a.get('email', 'N/A')
         role = a.get('role', '')
+        prefix = "✅ " if aid in selected_ids else ""
         buttons.append([
-            InlineKeyboardButton(f"{name} ({role})", callback_data=f"approver_{a.get('id', '')}")
+            InlineKeyboardButton(f"{prefix}{name} ({role})", callback_data=f"approver_{aid}")
         ])
-    buttons.append([InlineKeyboardButton("❌ Hủy", callback_data="cancel")])
 
-    await message_obj.reply_text(
-        "👥 <b>Chọn người duyệt đơn:</b>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(buttons),
+    # Show "Done" button only when at least 1 approver is selected
+    bottom_row = []
+    if selected_list:
+        bottom_row.append(InlineKeyboardButton(f"✔️ Xong ({len(selected_list)} người)", callback_data="approver_done"))
+    bottom_row.append(InlineKeyboardButton("❌ Hủy", callback_data="cancel"))
+    buttons.append(bottom_row)
+
+    text = (
+        f"👥 <b>Chọn người duyệt đơn</b> (đã chọn: {len(selected_list)})\n"
+        "Bấm vào tên để chọn/bỏ chọn, bấm \"Xong\" khi hoàn tất."
     )
+
+    if edit:
+        await target.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await target.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
     return SELECT_APPROVER
 
 
 async def select_approver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle approver selection and submit the application."""
+    """Handle approver toggle/done and submit the application."""
     query = update.callback_query
     await query.answer()
 
     if query.data == "cancel":
         context.user_data.pop("app_draft", None)
+        context.user_data.pop("_approvers_cache", None)
+        context.user_data.pop("_selected_approvers", None)
         await query.edit_message_text("❌ Đã hủy tạo đơn.", reply_markup=back_to_menu_keyboard())
         return ConversationHandler.END
 
-    approver_id = query.data.replace("approver_", "")
     approvers_cache = context.user_data.get("_approvers_cache", [])
-    approver = next((a for a in approvers_cache if a.get("id") == approver_id), None)
-    approver_name = ""
-    if approver:
-        approver_name = f"{approver.get('firstName', '')} {approver.get('lastName', '')}".strip()
+    selected = context.user_data.setdefault("_selected_approvers", [])
 
-    # Build payload with approver
+    if query.data != "approver_done":
+        # Toggle approver selection
+        approver_id = query.data.replace("approver_", "")
+        existing_idx = next((i for i, a in enumerate(selected) if a["approverId"] == approver_id), None)
+        if existing_idx is not None:
+            selected.pop(existing_idx)
+            # Re-index
+            for i, a in enumerate(selected):
+                a["index"] = i
+        else:
+            approver = next((a for a in approvers_cache if a.get("id") == approver_id), None)
+            name = ""
+            if approver:
+                name = f"{approver.get('firstName', '')} {approver.get('lastName', '')}".strip()
+            selected.append({"approverId": approver_id, "index": len(selected), "name": name})
+
+        # Re-show keyboard with updated selections
+        return await _show_approver_keyboard(query.message, context, approvers_cache, edit=True)
+
+    # "Done" pressed — submit the application
+    if not selected:
+        await query.answer("Vui lòng chọn ít nhất 1 người duyệt!", show_alert=True)
+        return SELECT_APPROVER
+
+    # Build payload
     draft = context.user_data.get("app_draft", {})
     payload = {k: v for k, v in draft.items() if not k.startswith("_")}
-    payload["approvers"] = [{"approverId": approver_id, "index": 0}]
+    payload["approvers"] = [{"approverId": a["approverId"], "index": a["index"]} for a in selected]
+    payload.setdefault("attachmentFileIds", [])
+
+    approver_names = ", ".join(a.get("name", "?") for a in selected)
+
+    logger.info("Submitting time application payload: %s", payload)
 
     client: ERPClient = context.user_data.get("erp_client")
     if not client:
@@ -534,13 +604,14 @@ async def select_approver(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"✅ <b>Đơn đã được tạo thành công!</b>\n\n"
             f"🆔 Mã đơn: <code>{app_id}</code>\n"
             f"📊 Trạng thái: {status}\n"
-            f"👤 Người duyệt: {approver_name}",
+            f"👤 Người duyệt: {approver_names}",
             parse_mode="HTML",
             reply_markup=back_to_menu_keyboard(),
         )
     except AuthenticationError as e:
         await query.edit_message_text(str(e))
     except APIError as e:
+        logger.error("API error creating application: %s", e)
         await query.edit_message_text(f"❌ {e}", reply_markup=back_to_menu_keyboard())
     except Exception as e:
         logger.error("Create application error: %s", e)
@@ -548,6 +619,7 @@ async def select_approver(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     context.user_data.pop("app_draft", None)
     context.user_data.pop("_approvers_cache", None)
+    context.user_data.pop("_selected_approvers", None)
     return ConversationHandler.END
 
 
@@ -729,6 +801,7 @@ def build_create_application_handler() -> ConversationHandler:
             ],
             SELECT_APPROVER: [
                 CallbackQueryHandler(select_approver, pattern="^approver_"),
+                CallbackQueryHandler(select_approver, pattern="^approver_done$"),
                 CallbackQueryHandler(cancel_conversation, pattern="^cancel$"),
             ],
         },

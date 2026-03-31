@@ -103,14 +103,19 @@ class ERPClient:
             if not loaded:
                 raise AuthenticationError("Bạn chưa đăng nhập. Dùng /login để đăng nhập.")
 
+        url = self._url(path)
+        logger.debug("REQUEST %s %s | json=%s | params=%s", method, url, json, params)
+
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.request(
                 method,
-                self._url(path),
+                url,
                 json=json,
                 params=params,
                 headers=self._headers(),
             )
+
+        logger.debug("RESPONSE %s %s | status=%s | body=%s", method, url, resp.status_code, resp.text[:500])
 
         if resp.status_code == 401 and retry_on_401:
             refreshed = await self._try_refresh()
@@ -146,7 +151,9 @@ class ERPClient:
 
     # Time Applications — CRUD
     async def create_time_application(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        logger.info("CREATE TIME APPLICATION payload: %s", data)
         resp = await self._request("POST", API["time_applications"], json=data)
+        logger.info("CREATE TIME APPLICATION response: status=%s body=%s", resp.status_code, resp.text[:1000])
         if resp.status_code in (200, 201):
             return resp.json()
         error_detail = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text
