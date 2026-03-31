@@ -1,0 +1,6 @@
+.env
+__pycache__/
+venv
+__init__.py
+bear_bot.db
+.DS_Store
